@@ -1,54 +1,75 @@
-const BASE_URL = "https://webinars.webdev.education-services.ru/sp7-api";
+const BASE_URL = 'https://webinars.webdev.education-services.ru/sp7-api';
 
 let sellers;
 let customers;
 let lastResult;
 let lastQuery;
 
-const mapRecords = (data) =>
-    data.map((item) => ({
-        id: item.receipt_id,
-        date: item.date,
-        seller: sellers[item.seller_id],
-        customer: customers[item.customer_id],
-        total: item.total_amount,
-    }));
+/**
+ 
+ * @param {Array} data 
+ * @returns {Array}
+ */
+const mapRecords = (data) => data.map(item => ({
+    id: item.receipt_id,
+    date: item.date,
+    seller: sellers[item.seller_id],
+    customer: customers[item.customer_id],
+    total: item.total_amount
+}));
 
+/**
+ 
+ * @param {string} dateStr 
+ * @returns {string|null}
+ */
 const formatDateToISO = (dateStr) => {
     if (!dateStr) return null;
-    const parts = dateStr.split(".");
+    const parts = dateStr.split('.');
     if (parts.length === 3) {
         const [day, month, year] = parts;
-        return `${year}-${month.padStart(2, "0")}-${day.padStart(2, "0")}`;
+        return `${year}-${month.padStart(2, '0')}-${day.padStart(2, '0')}`;
     }
     return dateStr;
 };
 
+/**
+ 
+ * @param {Object} query - параметры от компонентов
+ * @returns {Object} параметры для сервера
+ */
 const mapQueryToServer = (query) => {
     const serverQuery = {};
 
+
     if (query.search) {
-        serverQuery.q = query.search;
+        serverQuery.search = query.search;
     }
 
-    Object.keys(query).forEach((key) => {
-        if (key.startsWith("filter[")) {
+
+    Object.keys(query).forEach(key => {
+        if (key.startsWith('filter[')) {
             let value = query[key];
-            if (key === "filter[date]" && value) {
+
+
+            if (key === 'filter[date]' && value) {
                 value = formatDateToISO(value);
             }
+
             if (value) {
                 serverQuery[key] = value;
             }
         }
     });
 
+
     if (query.sortBy && query.order) {
-        const direction = query.order; // 'up' или 'down'
-        if (direction === "up" || direction === "down") {
+        const direction = query.order;
+        if (direction === 'up' || direction === 'down') {
             serverQuery.sort = `${query.sortBy}:${direction}`;
         }
     }
+
 
     if (query.page && Number.isInteger(query.page) && query.page >= 1) {
         serverQuery.page = query.page;
@@ -60,36 +81,45 @@ const mapQueryToServer = (query) => {
     return serverQuery;
 };
 
+/**
+ 
+ * @param {Object} params 
+ * @returns {string}
+ */
 const buildQueryString = (params) => {
     return Object.entries(params)
         .map(([key, value]) => {
+
             const encodedKey = encodeURIComponent(key)
-                .replace(/%5B/g, "[")
-                .replace(/%5D/g, "]");
+                .replace(/%5B/g, '[')
+                .replace(/%5D/g, ']');
             const encodedValue = encodeURIComponent(value);
             return `${encodedKey}=${encodedValue}`;
         })
-        .join("&");
+        .join('&');
 };
 
 export function initData(sourceData) {
+
+    /**
+     
+     * @returns {Promise<Object>}
+     */
     const getIndexes = async () => {
         if (!sellers || !customers) {
             try {
                 [sellers, customers] = await Promise.all([
-                    fetch(`${BASE_URL}/sellers`).then(async (res) => {
-                        if (!res.ok)
-                            throw new Error(`Failed to fetch sellers: ${res.status}`);
+                    fetch(`${BASE_URL}/sellers`).then(async res => {
+                        if (!res.ok) throw new Error(`Failed to fetch sellers: ${res.status}`);
                         return res.json();
                     }),
-                    fetch(`${BASE_URL}/customers`).then(async (res) => {
-                        if (!res.ok)
-                            throw new Error(`Failed to fetch customers: ${res.status}`);
+                    fetch(`${BASE_URL}/customers`).then(async res => {
+                        if (!res.ok) throw new Error(`Failed to fetch customers: ${res.status}`);
                         return res.json();
                     }),
                 ]);
             } catch (error) {
-                console.error("Ошибка загрузки индексов:", error);
+                console.error('Ошибка загрузки индексов:', error);
                 sellers = sellers || {};
                 customers = customers || {};
             }
@@ -97,52 +127,70 @@ export function initData(sourceData) {
         return { sellers, customers };
     };
 
+    /**
+     
+     * @param {Object} query - параметры запроса
+     * @param {boolean} isUpdated - принудительное обновление кеша
+     * @returns {Promise<Object>}
+     */
     const getRecords = async (query = {}, isUpdated = false) => {
         const serverQuery = mapQueryToServer(query);
-        const nextQuery = buildQueryString(serverQuery);
+        const queryString = buildQueryString(serverQuery);
+        const fullUrl = `${BASE_URL}/records?${queryString}`;
 
-        // ОТЛАДКА: логируем запрос
-        console.log("Запрос к серверу:", {
-            query,
-            serverQuery,
-            url: `${BASE_URL}/records?${nextQuery}`,
-        });
 
-        if (lastQuery === nextQuery && !isUpdated) {
-            console.log("Возвращаем из кеша");
+        if (lastQuery === queryString && !isUpdated) {
             return lastResult;
         }
 
         try {
-            const response = await fetch(`${BASE_URL}/records?${nextQuery}`);
+            const response = await fetch(fullUrl, {
+                headers: {
+                    'Accept': 'application/json'
+                }
+            });
 
             if (!response.ok) {
                 const errorText = await response.text();
-                console.error("Ошибка сервера:", {
+                console.error('Ошибка сервера:', {
                     status: response.status,
-                    response: errorText,
+                    url: fullUrl,
+                    response: errorText.slice(0, 500)
                 });
                 throw new Error(`HTTP ${response.status}: ${errorText}`);
             }
 
-            const records = await response.json();
-            console.log("Ответ сервера:", {
-                total: records.total,
-                itemsCount: records.items?.length,
-            });
 
-            lastQuery = nextQuery;
+            const contentType = response.headers.get('content-type');
+            if (!contentType || !contentType.includes('application/json')) {
+                console.warn('⚠️ Неожиданный Content-Type:', contentType);
+            }
+
+            const records = await response.json();
+
+
+            if (!records || typeof records.total !== 'number' || !Array.isArray(records.items)) {
+                console.error('Некорректная структура ответа:', records);
+                throw new Error('Invalid API response format');
+            }
+
+
+            lastQuery = queryString;
             lastResult = {
                 total: records.total,
-                items: mapRecords(records.items),
+                items: mapRecords(records.items)
             };
 
             return lastResult;
         } catch (error) {
-            console.error("Ошибка в getRecords:", error);
+            console.error('Ошибка в getRecords:', error);
+
             return { total: 0, items: [] };
         }
     };
 
-    return { getIndexes, getRecords };
+    return {
+        getIndexes,
+        getRecords
+    };
 }
